@@ -22,7 +22,7 @@ from sklearn.decomposition import PCA
 
 
 def create_PCS(fname_header: str, fname_photo: str, npcs: int,
-               epoch_lim: list, fname_output: str, mjd_gap=5, flux_lim=300h,
+               epoch_lim: list, fname_output: str, mjd_gap=5, flux_lim=300,
                time_bin=0.25):
     """Create principal components from a set of PERFECT simulations.
     
