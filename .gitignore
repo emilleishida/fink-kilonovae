@@ -130,3 +130,4 @@ dmypy.json
 
 
 data/RESSPECT_PERFECT_LIGHTCURVES.csv
+*.out
