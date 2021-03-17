@@ -88,7 +88,7 @@ def filter_points(obs_mjd: np.array, obs_flux: np.array,
     
 def extract_features(mjd: np.array, flux: np.array, epoch_lim: list,
                      time_bin:float, pcs: pd.DataFrame, 
-                     flux_lim=0, norm=False):
+                     flux_lim=0):
     """
     Extract features from light curve.
     
@@ -109,8 +109,6 @@ def extract_features(mjd: np.array, flux: np.array, epoch_lim: list,
         values their amplitude at each epoch in the grid.
     flux_lim: float (optional)
         Min flux cut applied to all points. Default is 0.
-    norm: bool (optional)
-        If True normalize such that max(flux) = 1. Default is False.
         
     Returns
     -------
@@ -145,10 +143,7 @@ def extract_features(mjd: np.array, flux: np.array, epoch_lim: list,
             coef_mat[key] = pcs[key].values[mjd_flag]
 
         # fit coefficients
-        if norm:
-            max_newflux = max(new_flux)
-        else:
-            max_newflux = 1
+        max_newflux = max(new_flux)
             
         x, res, rank, s = np.linalg.lstsq(coef_mat.values, 
                                           new_flux/max_newflux,
@@ -176,7 +171,7 @@ def extract_features(mjd: np.array, flux: np.array, epoch_lim: list,
 
 def extract_all_filters(epoch_lim: list, pcs: pd.DataFrame, 
                         time_bin: float, filters: list, 
-                        lc: pd.DataFrame, flux_lim=0, norm=False):
+                        lc: pd.DataFrame, flux_lim=0):
     """Extract features from 1 object in all available filters.
     
     Parameters
@@ -197,8 +192,6 @@ def extract_all_filters(epoch_lim: list, pcs: pd.DataFrame,
         Width of time gap between two elements in PCs.
     flux_lim: float (optional)
         Min flux cut applied to all points. Default is 0.
-    norm: bool (optional)
-        If True normalize such that max(flux) = 1. Default is False.
     
     Returns
     -------
@@ -227,7 +220,7 @@ def extract_all_filters(epoch_lim: list, pcs: pd.DataFrame,
         res = extract_features(mjd=obs_mjd, flux=obs_flux,
                                epoch_lim=epoch_lim,
                                time_bin=time_bin, pcs=pcs,
-                               flux_lim=flux_lim, norm=norm)
+                               flux_lim=flux_lim)
         
         all_features = all_features + res
         
@@ -237,7 +230,7 @@ def extract_all_filters(epoch_lim: list, pcs: pd.DataFrame,
 def build_feature_matrix(epoch_lim: list, filters: list, 
                          header: pd.DataFrame, pcs: pd.DataFrame,
                          photo:pd.DataFrame, time_bin:float,
-                         flux_lim=0, norm=False):
+                         flux_lim=0):
     """Build feature matrix for set of objects.
     
     Parameters
@@ -258,17 +251,13 @@ def build_feature_matrix(epoch_lim: list, filters: list,
     time_bin: float
         Width of time gap between two elements in PCs.
     flux_lim: float (optional)
-        Min flux cut applied to all points. Default is 0.
-    norm: bool (optional)
-        If True normalize such that max(flux) = 1. Default is False.
-    
+        Min flux cut applied to all points. Default is 0.    
     
     Returns
     -------
     matrix: pd.DataFrame
         Complete feature matrix.
     """
-    print(filters)
     
     matrix = []
     
@@ -285,7 +274,7 @@ def build_feature_matrix(epoch_lim: list, filters: list,
     
         line = extract_all_filters(epoch_lim=epoch_lim, pcs=pcs, 
                                    time_bin=time_bin, filters=filters, 
-                                   lc=lc, flux_lim=flux_lim, norm=norm)
+                                   lc=lc, flux_lim=flux_lim)
         line.insert(0, vartype)
         line.insert(0, snid)
         
@@ -311,8 +300,12 @@ def build_feature_matrix(epoch_lim: list, filters: list,
                 
     columns.insert(0, 'type')
     columns.insert(0, 'SNID')
+    
+    col = []
+    for item in columns:
+        col.append(item.replace('b', ''))
             
-    return pd.DataFrame(matrix, columns=columns)
+    return pd.DataFrame(matrix, columns=col)
 
 
 def mag2fluxcal_snana(magpsf: float, sigmapsf: float):
@@ -339,7 +332,7 @@ def mag2fluxcal_snana(magpsf: float, sigmapsf: float):
 
 def extract_features_grandma(hf, epoch_lim: list,
                             time_bin:float, pcs: pd.DataFrame, 
-                            flux_lim=0, norm=False):
+                            flux_lim=0):
     """Extract features from a set of GRANDMA simulated light curves.
     
     Parameters
@@ -357,8 +350,6 @@ def extract_features_grandma(hf, epoch_lim: list,
         values their amplitude at each epoch in the grid.
     flux_lim: float (optional)
         Min flux cut applied to all points. Default is 0.
-    norm: bool (optional)
-        If True normalize such that max(flux) = 1. Default is False.
         
     Returns
     -------
@@ -386,7 +377,7 @@ def extract_features_grandma(hf, epoch_lim: list,
 
             temp = extract_features(mjd=time, flux=fluxcal, epoch_lim=epoch_lim,
                                     time_bin=time_bin, pcs=pcs, 
-                                    flux_lim=flux_lim, norm=norm)
+                                    flux_lim=flux_lim)
             
             line = line + temp
 
@@ -407,7 +398,7 @@ def extract_features_grandma(hf, epoch_lim: list,
           
         for name in names_root:
             if len(name.split()) > 1:
-                columns.append(name + fname[1])
+                columns.append(name + fname[-1])
             else:
                 columns.append(name + fname)
                
@@ -445,8 +436,6 @@ def main(user_input):
     -m: str (optional)
         Path to metadata (or header) file. Only used if
         dataset == 'Fink'. Default is None.
-    -u: bool (optional)
-        If True, normalize flux. Default is False.
     """
     
     # load components
@@ -469,8 +458,7 @@ def main(user_input):
                                   filters=filters, 
                                   header=header, pcs=pcs,
                                   photo=photo, time_bin=user_input.time_bin,
-                                  flux_lim=user_input.flux_lim,
-                                  norm=bool(user_input.norm))
+                                  flux_lim=user_input.flux_lim)
         
         matrix.to_csv(user_input.output_fname, index=False)
         
@@ -486,8 +474,7 @@ def main(user_input):
                                           epoch_lim=user_input.epoch_lim,
                                           time_bin=user_input.time_bin, 
                                           pcs=pcs, 
-                                          flux_lim=user_input.flux_lim, 
-                                          norm=bool(user_input.norm))
+                                          flux_lim=user_input.flux_lim)
         
     # remove null coefficients
     zeros = {}
@@ -536,9 +523,6 @@ if __name__ == '__main__':
     parser.add_argument('-f', '--min-flux-lim', dest='flux_lim',
                         required=False, type=float, default=0,
                        help='Minimum flux cut. Default is 0.')
-    parser.add_argument('-u', '--norm', dest='norm',
-                       required=False, type=int, default=0,
-                       help='If True normalize flux. Default is False.')
     
     from_user = parser.parse_args()
 
