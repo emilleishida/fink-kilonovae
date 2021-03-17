@@ -26,9 +26,9 @@ from sklearn.preprocessing import RobustScaler
 
 
 def train_random_forest(features_fname: list, out_model_fname: str, 
-                        out_train_fname: str, npcs=int,
+                        out_train_fname: str, out_test_fname: str, npcs=int,
                         kn_code = 51, type_key='type',
-                        conservative=True, test_size=0.25, n_estimators=1000,
+                        test_size=0.5, n_estimators=30,
                         external_data=None):
     """Train a Random Forest Classifier and save model to file.
     
@@ -38,19 +38,18 @@ def train_random_forest(features_fname: list, out_model_fname: str,
         Path to features files to be used in training.
     out_model_fname: str
         Path to output file where the trained model will be saved.
+    out_test_fname: str
+        Path to output file where the test sample will be saved.
     out_train_fname: str
         Path to output file where the training sample will be saved.
     npcs: int
         Number of PCs used to extract the features.
-    conservative: bool (optional)
-        If True add constraint on fit quality. This results in a lower number
-        of objects classified as KN but higher purity. Default is True.
     kn_code: list (optional)
         Code identifying the kilonova model. Default is [51].
     n_estimators: int (optional)
-        Number of trees in the forest. Default is 1000.
+        Number of trees in the forest. Default is 30.
     test_size: float (optional)
-        Fraction of data to be used as test sample. Default is 0.25.
+        Fraction of data to be used as test sample. Default is 0.5.
     type_key: str (optional)
         Keyword identifying object type in feature matrix. Default is 'type'.
     
@@ -62,45 +61,19 @@ def train_random_forest(features_fname: list, out_model_fname: str,
         dtemp = pd.read_csv(name)
         dlist.append(dtemp)
         
-    data = pd.concat(dlist, ignore_index=True)
-
-    # consider only objects with at least 1 measurement in each filter        
-    if npcs == 1:
-        zeros1 = np.logical_or(data['coeff1_g'].values == 0, 
-                               data['coeff1_r'].values == 0)
-    elif npcs == 2:
-        zeros11 = np.logical_or(data['coeff1_g'].values == 0, 
-                                data['coeff1_r'].values == 0)
-        zeros12 = np.logical_or(data['coeff2_g'].values == 0, 
-                                data['coeff2_r'].values == 0)
-        zeros1 = np.logical_or(zeros11, zeros12)
-    elif npcs == 3:
-        zeros11 = np.logical_or(data['coeff1_g'].values == 0, 
-                                data['coeff1_r'].values == 0)
-        zeros12 = np.logical_or(data['coeff2_g'].values == 0, 
-                                data['coeff2_r'].values == 0)
-        zeros13 = np.logical_or(data['coeff3_g'].values == 0, 
-                                data['coeff3_r'].values == 0)
-        zeros1 = np.logical_or(zeros11, np.logical_and(zeros12, zeros13))
-    else:
-        raise ValueError('Max number of PCs implemented is 3!')
-
-    # constraint on quality cut
-    if conservative:
-        zeros2 = np.logical_or(data['residuo_g'].values == 0, 
-                           data['residuo_r'].values == 0)
-        zeros = np.logical_or(zeros1, zeros2)
-    else:
-        zeros = zeros1
+    data_orig = pd.concat(dlist, ignore_index=True)
     
-    # remove zeros
-    data2 = data[~zeros]
+    # remove bad residuo fits
+    bad_fit_flag = np.logical_or(data_orig['residuo_g'].values == 0,
+                                  data_orig['residuo_r'].values == 0)
+    
+    data = data_orig[~bad_fit_flag]
     
     # identify KN model
-    kn_flag = np.array([item in kn_code for item in data2[type_key].values]) 
+    kn_flag = np.array([item in kn_code for item in data[type_key].values]) 
     
     # separate data
-    X_train, X_test, y_train, y_test = train_test_split(data2,
+    X_train, X_test, y_train, y_test = train_test_split(data,
                                                         kn_flag,
                                                         test_size=test_size)
     
@@ -114,8 +87,9 @@ def train_random_forest(features_fname: list, out_model_fname: str,
     # save the model to disk
     pickle.dump(pipe, open(out_model_fname, 'wb'))
     
-    # save training sample to disk
+    # save samples to disk
     X_train.to_csv(out_train_fname, index=False)
+    X_test.to_csv(out_test_fname, index=False)
     
 
 def main(user_input):
@@ -135,12 +109,9 @@ def main(user_input):
     -c: str (optional)
         Keyword identifying object type in feature matrix. Default is 'type'.
     -k: list (optional)
-        Code identifying the kilonova model. Default is [51].
-    -l: int (optional)
-        If True add constraint on fit quality. This results in a lower number
-        of objects classified as KN but higher purity. Default is True.
+        Code identifying the kilonova model. Default is [51,50].
     -n: int (optional)
-        Number of trees in the forest. Default is 1000.
+        Number of trees in the forest. Default is 30.
     -t: float (optional)
         Fraction of data to be used as test sample. Default is 0.25. 
     """
@@ -149,9 +120,9 @@ def main(user_input):
     features_fname = user_input.features_fname
     out_model_fname = user_input.out_model_fname
     out_train_fname = user_input.out_train_fname
+    out_test_fname = user_input.out_test_fname
     kn_code = user_input.kn_code
     type_key = user_input.type_key
-    conservative = bool(user_input.conservative)
     test_size = user_input.test_size
     n_estimators = user_input.n_estimators
     npcs = user_input.npcs
@@ -160,9 +131,9 @@ def main(user_input):
     train_random_forest(features_fname=features_fname, 
                         out_model_fname=out_model_fname, 
                         out_train_fname=out_train_fname,
+                        out_test_fname=out_test_fname,
                         npcs=npcs,
                         kn_code=kn_code, type_key=type_key,
-                        conservative=conservative, 
                         test_size=test_size, 
                         n_estimators=n_estimators)
     
@@ -183,28 +154,26 @@ if __name__ == '__main__':
                        help='Number of PCs used to extract the features.')
     parser.add_argument('-s', '--out-train-fname', dest='out_train_fname',
                        required=True, type=str, help='Path to training sample'
-                       ' output file name.')
+                       ' output file.')
+    parser.add_argument('-e', '--out-test-fname', required=True, type=str,
+                       help='Path to test sample output file.')
     parser.add_argument('-c', '--model-keyword', dest='type_key',
                         type=str, required=False,
                         default='type',
                         help='Keyword identifying object type in ' 
                         'feature matrix. Default is "type".')
     parser.add_argument('-k', '--kn-code', dest='kn_code',
-                        required=False, type=int, default=[51], nargs='+',
+                        required=False, type=int, default=[51,50], nargs='+',
                         help='Code identifying the kilonova '
                         'model. Default is [51].')
-    parser.add_argument('-l', '--liberal-conservative', 
-                         dest='conservative',
-                        required=False, default=True, type=int,
-                        help='If True add constraint on fit quality. '
-                         'Default is True.')
     parser.add_argument('-n', '--n-estimators', dest='n_estimators',
-                        required=False, type=int, default=1000,
-                        help='Number of trees in the forest.')
+                        required=False, type=int, default=30,
+                        help='Number of trees in the forest.'
+                       'Default is 30.')
     parser.add_argument('-t', '--test-size', dest='test_size',
-                        required=False, type=float,
+                        required=False, type=float, default=0.5,
                         help='Fraction of objects to be used in test.'
-                        'Default is 0.25.')    
+                        'Default is 0.5.')    
     
     from_user = parser.parse_args()
 
