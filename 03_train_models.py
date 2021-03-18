@@ -27,7 +27,7 @@ from sklearn.preprocessing import RobustScaler
 
 def train_random_forest(features_fname: list, out_model_fname: str, 
                         out_train_fname: str, out_test_fname: str, npcs=int,
-                        kn_code = 51, type_key='type',
+                        kn_code = [51], type_key='type',
                         test_size=0.5, n_estimators=30,
                         external_data=None):
     """Train a Random Forest Classifier and save model to file.
@@ -46,6 +46,7 @@ def train_random_forest(features_fname: list, out_model_fname: str,
         Number of PCs used to extract the features.
     kn_code: list (optional)
         Code identifying the kilonova model. Default is [51].
+        If kn_code = [None], train the model with multiple classes.
     n_estimators: int (optional)
         Number of trees in the forest. Default is 30.
     test_size: float (optional)
@@ -70,8 +71,11 @@ def train_random_forest(features_fname: list, out_model_fname: str,
     data = data_orig[~bad_fit_flag]
     
     # identify KN model
-    kn_flag = np.array([item in kn_code for item in data[type_key].values]) 
-    
+    if str(kn_code[0]) != 'None':
+        kn_flag = np.array([item in kn_code for item in data[type_key].values]) 
+    else:
+        kn_flag = data[type_key].values.astype(int)
+
     # separate data
     X_train, X_test, y_train, y_test = train_test_split(data,
                                                         kn_flag,
@@ -82,7 +86,7 @@ def train_random_forest(features_fname: list, out_model_fname: str,
                          RandomForestClassifier(n_estimators=n_estimators))
     
     # fit the Random Forest
-    pipe.fit(X_train.values[:,2:], y_train)
+    pipe.fit(X_train.values[:,2:], y_train)    
     
     # save the model to disk
     pickle.dump(pipe, open(out_model_fname, 'wb'))
@@ -97,6 +101,8 @@ def main(user_input):
     
     Parameters
     ----------
+    -e: str
+        Path to output file where the test sample will be saved.
     -f: list
         Path to features files to be used in training.
     -o: str
@@ -113,7 +119,7 @@ def main(user_input):
     -n: int (optional)
         Number of trees in the forest. Default is 30.
     -t: float (optional)
-        Fraction of data to be used as test sample. Default is 0.25. 
+        Fraction of data to be used as test sample. Default is 0.5. 
     """
     
     # get variables
@@ -126,7 +132,7 @@ def main(user_input):
     test_size = user_input.test_size
     n_estimators = user_input.n_estimators
     npcs = user_input.npcs
-    
+
     # train and save model
     train_random_forest(features_fname=features_fname, 
                         out_model_fname=out_model_fname, 
@@ -163,7 +169,7 @@ if __name__ == '__main__':
                         help='Keyword identifying object type in ' 
                         'feature matrix. Default is "type".')
     parser.add_argument('-k', '--kn-code', dest='kn_code',
-                        required=False, type=int, default=[51,50], nargs='+',
+                        required=False, default=[51,50], nargs='+',
                         help='Code identifying the kilonova '
                         'model. Default is [51].')
     parser.add_argument('-n', '--n-estimators', dest='n_estimators',
