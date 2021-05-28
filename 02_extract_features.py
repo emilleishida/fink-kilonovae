@@ -484,7 +484,7 @@ def main(user_input):
         
     z = np.array([False for i in range(user_input.npcs)])
     for j in range(len(zeros)):
-        z = np.logical_or(z, zeros[j])
+        z = np.logical_or(z[j], zeros[j])
         
     matrix_clean = matrix[~z]
     matrix_clean.to_csv(user_input.output_fname, index=False)
