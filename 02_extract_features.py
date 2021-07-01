@@ -18,6 +18,22 @@ import numpy as np
 import argparse
 
 
+def fluxcal2mag(fluxcal):
+    """Convert FLUXCAL to magnitude.
+    
+    Parameters
+    ----------
+    fluxcal: float or np.array
+    
+    Returns
+    -------
+    magnitude: float or np.array
+    """
+    
+    mag = 2.5 * (11 - np.log10(fluxcal))
+    
+    return mag
+
 def filter_points(obs_mjd: np.array, obs_flux: np.array, 
                   PC_epoch_grid: np.array):
     """Translate observed points to an epoch grid to match the PCs.
@@ -60,20 +76,26 @@ def filter_points(obs_mjd: np.array, obs_flux: np.array,
     else:
         time_bin = np.unique(time_bins)[0]
         
+    # determine time of maximum    
     mjd_cent = obs_mjd[list(obs_flux).index(max(obs_flux))]
+    
+    # centralize epochs
     epochs = obs_mjd - mjd_cent
     
+    # identify which bins have measurements
     for i in range(PC_epoch_grid.shape[0]):
         flag1 = epochs >= PC_epoch_grid[i] - 0.5 * time_bin
         flag2 = epochs < PC_epoch_grid[i] + 0.5 * time_bin
         flag3 = np.logical_and(flag1, flag2)
     
-        if sum(flag3) > 0:
+        # keep rising epochs with measurements
+        if sum(flag3) > 0 and PC_epoch_grid[i] <= 0:
             flux_final.append(np.mean(obs_flux[flag3]))
             mjd_flag.append(True)
         else:
             mjd_flag.append(False)
     
+    # populate epoch bins with available measurements
     if sum(mjd_flag) > 0:
         mjd_flag = np.array(mjd_flag)
     
@@ -88,7 +110,7 @@ def filter_points(obs_mjd: np.array, obs_flux: np.array,
     
 def extract_features(mjd: np.array, flux: np.array, epoch_lim: list,
                      time_bin:float, pcs: pd.DataFrame, 
-                     flux_lim=0):
+                     flux_lim=0, phot=False):
     """
     Extract features from light curve.
     
@@ -109,12 +131,18 @@ def extract_features(mjd: np.array, flux: np.array, epoch_lim: list,
         values their amplitude at each epoch in the grid.
     flux_lim: float (optional)
         Min flux cut applied to all points. Default is 0.
+    phot: bool (optional)
+        If True return surviving photometric grid points. 
+        Default is False.
         
     Returns
     -------
     features: np.array
         Features for this light curve. Order is:
         [n_points, residual_from_fit, coefficients, max_flux]
+    phot: dict (optional)
+        Keywords are [MJD, FLUXCAL] in the same bins defined
+        by the PCs and MJD flag.
     """
     
     # create list for storing output
@@ -156,22 +184,32 @@ def extract_features(mjd: np.array, flux: np.array, epoch_lim: list,
         if len(res) > 0:
             features.append(res[0])
         else:
-            features.append(0)
+            features.append(-9)
                 
         for elem in x:
             features.append(elem)
             
         features.append(max_newflux)
+        
+        # return photometry for posterior color calculations
+        obs_phot = {}
+        obs_phot['new_mjd'] = new_mjd
+        obs_phot['new_flux'] = new_flux
+        obs_phot['mjd_flag'] = mjd_flag
             
     else:
         features = [0 for i in range(len(pcs.keys()) + 3)]
-        
-    return features  
 
+        obs_phot = {}
+        obs_phot['new_mjd'] = None
+        obs_phot['new_flux'] = None
+        obs_phot['mjd_flag'] = None
+    
+    return features, obs_phot
 
 def extract_all_filters(epoch_lim: list, pcs: pd.DataFrame, 
                         time_bin: float, filters: list, 
-                        lc: pd.DataFrame, flux_lim=0):
+                        lc: pd.DataFrame, flux_lim=0, colors=False):
     """Extract features from 1 object in all available filters.
     
     Parameters
@@ -190,6 +228,8 @@ def extract_all_filters(epoch_lim: list, pcs: pd.DataFrame,
         Order of PCs when calling pcs.keys() is important.
     time_bin: float
         Width of time gap between two elements in PCs.
+    colors: bool (optional)
+        If True, the available colour measurement closest to max.
     flux_lim: float (optional)
         Min flux cut applied to all points. Default is 0.
     
@@ -197,40 +237,80 @@ def extract_all_filters(epoch_lim: list, pcs: pd.DataFrame,
     -------
     all_features: list
         List of features for this object.
-        Order is all features from first filter, then all features from
-        second filters, etc.
+        Order is all features from first filter, then all features
+        from second filters, etc.
     """
     
     # build epoch grid
-    PC_epoch_grid = np.arange(epoch_lim[0], epoch_lim[1] + time_bin, time_bin)
+    PC_epoch_grid = np.arange(epoch_lim[0], 
+                              epoch_lim[1] + time_bin, time_bin)
 
     # store results from extract_features
-    all_features = []
+    all_features = {}
 
-    for i in range(len(filters)):
-        filter_flag = lc['FLT'].values == filters[i]
+    for fil in filters:
+        all_features[fil] = {}
+        
+        filter_flag = lc['FLT'].values == fil
         
         # get number of surviving points
         npoints = sum(filter_flag)
     
-        obs_mjd = lc['MJD'].values[filter_flag]
-        obs_flux = lc['FLUXCAL'].values[filter_flag]
+        if npoints > 0:
+            obs_mjd = lc['MJD'].values[filter_flag]
+            obs_flux = lc['FLUXCAL'].values[filter_flag]
             
-        # extract features
-        res = extract_features(mjd=obs_mjd, flux=obs_flux,
-                               epoch_lim=epoch_lim,
-                               time_bin=time_bin, pcs=pcs,
-                               flux_lim=flux_lim)
+            # extract features
+            res, phot = extract_features(mjd=obs_mjd, 
+                                         flux=obs_flux,
+                                         epoch_lim=epoch_lim,
+                                         time_bin=time_bin,
+                                         pcs=pcs,
+                                         flux_lim=flux_lim,
+                                         phot=colors)
+            
+            all_features[fil]['feat'] = res
+            all_features[fil]['phot'] = phot
+        else:
+            all_features[fil]['feat'] = [None]
+            all_features[fil]['phot'] = [None]
+    
+    # check if there is photometry allowing color calculation
+    c = None
+    if colors and len(all_features[filters[0]]['phot']) > 0 and \
+       len(all_features[filters[1]]['phot']) > 0:
+        # check if there are the same time bins in both filters
+        bin_flag = np.logical_and(all_features[filters[0]]['phot']['mjd_flag'],
+                                  all_features[filters[1]]['phot']['mjd_flag'])
         
-        all_features = all_features + res
-        
-    return all_features
-
+        if sum(bin_flag) > 0:
+            surv_epoch = max(PC_epoch_grid[bin_flag])
+            
+            mag = []
+            for f in filters: 
+                flag = all_features[f]['phot']['new_mjd'] == surv_epoch
+                flux = all_features[f]['phot']['new_flux'][flag]
+                mag.append(fluxcal2mag(flux))
+                
+            c = [mag[i] - mag[i + 1] for i in range(len(filters) - 1)]    
+            
+    # concatenate the available features
+    matrix_line = []
+    for fil in filters:
+        matrix_line = matrix_line + list(all_features[fil]['feat'])
+            
+    # concatenate color in the epoch closest to maximum
+    if c:
+        matrix_line = matrix_line + list(c[0])
+    else:
+        matrix_line = matrix_line + [None]
+            
+    return matrix_line
 
 def build_feature_matrix(epoch_lim: list, filters: list, 
                          header: pd.DataFrame, pcs: pd.DataFrame,
                          photo:pd.DataFrame, time_bin:float,
-                         flux_lim=0):
+                         flux_lim=0, colors=False):
     """Build feature matrix for set of objects.
     
     Parameters
@@ -250,6 +330,9 @@ def build_feature_matrix(epoch_lim: list, filters: list,
         Light curve information extracted from SNANA files.
     time_bin: float
         Width of time gap between two elements in PCs.
+    colors: bool (optional)
+        If True, add extra element with color at max.
+        Default is False.
     flux_lim: float (optional)
         Min flux cut applied to all points. Default is 0.    
     
@@ -274,7 +357,8 @@ def build_feature_matrix(epoch_lim: list, filters: list,
     
         line = extract_all_filters(epoch_lim=epoch_lim, pcs=pcs, 
                                    time_bin=time_bin, filters=filters, 
-                                   lc=lc, flux_lim=flux_lim)
+                                   lc=lc, flux_lim=flux_lim,
+                                   colors=colors)
         line.insert(0, vartype)
         line.insert(0, snid)
         
@@ -300,13 +384,13 @@ def build_feature_matrix(epoch_lim: list, filters: list,
                 
     columns.insert(0, 'type')
     columns.insert(0, 'SNID')
+    columns.append('color')
     
     col = []
     for item in columns:
         col.append(item.replace('b', ''))
             
     return pd.DataFrame(matrix, columns=col)
-
 
 def mag2fluxcal_snana(magpsf: float, sigmapsf: float):
     """ Conversion from magnitude to Fluxcal from SNANA manual
@@ -329,10 +413,9 @@ def mag2fluxcal_snana(magpsf: float, sigmapsf: float):
 
     return fluxcal, fluxcal_err
 
-
 def extract_features_grandma(hf, epoch_lim: list,
                             time_bin:float, pcs: pd.DataFrame, 
-                            flux_lim=0):
+                            flux_lim=0, phot=False):
     """Extract features from a set of GRANDMA simulated light curves.
     
     Parameters
@@ -350,6 +433,9 @@ def extract_features_grandma(hf, epoch_lim: list,
         values their amplitude at each epoch in the grid.
     flux_lim: float (optional)
         Min flux cut applied to all points. Default is 0.
+    phot: bool (optional)
+        If True return surviving photometric grid points. 
+        Default is False.
         
     Returns
     -------
@@ -367,24 +453,62 @@ def extract_features_grandma(hf, epoch_lim: list,
     for key in keys:
         
         line = []
+        all_features = {}
         
-        for i in range(len(filters)): 
-            mag = hf.get(key).get(filters[i]).get('mag')[()]
-            time = hf.get(key).get(filters[i]).get('time')[()]
-            error = hf.get(key).get(filters[i]).get('magerr')[()]
-
-            fluxcal, fluxcalerr = mag2fluxcal_snana(mag, error)
-
-            temp = extract_features(mjd=time, flux=fluxcal, epoch_lim=epoch_lim,
-                                    time_bin=time_bin, pcs=pcs, 
-                                    flux_lim=flux_lim)
+        for f in filters: 
+            all_features[f] = {}
+            mag = hf.get(key).get(f).get('mag')[()]
+            time = hf.get(key).get(f).get('time')[()]
+            error = hf.get(key).get(f).get('magerr')[()]
             
-            line = line + temp
+            if len(mag) > 0:
+                fluxcal, fluxcalerr = mag2fluxcal_snana(mag, error)
 
-        line.insert(0, 51)
-        line.insert(0, key)
+                res, photom = extract_features(mjd=time, flux=fluxcal, 
+                                               epoch_lim=epoch_lim,
+                                               time_bin=time_bin, pcs=pcs, 
+                                               flux_lim=flux_lim, phot=phot)
+            
+                all_features[fil]['feat'] = res
+                all_features[fil]['phot'] = photom
+            else:
+                all_features[fil]['feat'] = [None]
+                all_features[fil]['phot'] = [None]
         
-        m1.append(line)
+        # check if there is photometry allowing color calculation
+        c = None
+        if colors and len(all_features[filters[0]]['phot']) > 0 and \
+           len(all_features[filters[1]]['phot']) > 0:
+            # check if there are the same time bins in both filters
+            bin_flag = np.logical_and(all_features[filters[0]]['phot']['mjd_flag'],
+                                      all_features[filters[1]]['phot']['mjd_flag'])
+        
+            if sum(bin_flag) > 0:
+                surv_epoch = max(PC_epoch_grid[bin_flag])
+            
+                mag = []
+                for f in filters: 
+                    flag = all_features[f]['phot']['new_mjd'] == surv_epoch
+                    flux = all_features[f]['phot']['new_flux'][flag]
+                    mag.append(fluxcal2mag(flux))
+                
+                c = [mag[i] - mag[i + 1] for i in range(len(filters) - 1)]    
+            
+        # concatenate the available features
+        matrix_line = []
+        for fil in filters:
+            matrix_line = matrix_line + list(all_features[fil]['feat'])
+            
+        # concatenate color in the epoch closest to maximum
+        if c:
+            matrix_line = matrix_line + list(c[0])
+        else:
+            matrix_line = matrix_line + [None]
+        
+        matrix_line.insert(0, 51)
+        matrix_line.insert(0, key)
+        
+        m1.append(matrix_line)
     
     # columns names
     names_root = ['npoints_', 'residuo_'] + \
@@ -404,6 +528,7 @@ def extract_features_grandma(hf, epoch_lim: list,
                
     columns.insert(0, 'type')
     columns.insert(0, 'SNID')
+    columns.append('color')
 
     matrix = pd.DataFrame(m1, columns=columns)
     
@@ -436,6 +561,8 @@ def main(user_input):
     -m: str (optional)
         Path to metadata (or header) file. Only used if
         dataset == 'Fink'. Default is None.
+    -l: bool or int (optional)
+        If True or > 0 add column with color at max.
     """
     
     # load components
@@ -458,7 +585,8 @@ def main(user_input):
                                   filters=filters, 
                                   header=header, pcs=pcs,
                                   photo=photo, time_bin=user_input.time_bin,
-                                  flux_lim=user_input.flux_lim)
+                                  flux_lim=user_input.flux_lim,
+                                  colors=user_input.colors)
         
         matrix.to_csv(user_input.output_fname, index=False)
         
@@ -474,7 +602,8 @@ def main(user_input):
                                           epoch_lim=user_input.epoch_lim,
                                           time_bin=user_input.time_bin, 
                                           pcs=pcs, 
-                                          flux_lim=user_input.flux_lim)
+                                          flux_lim=user_input.flux_lim,
+                                          phot=user_input.colors)
         
     # remove null coefficients
     zeros = {}
@@ -484,9 +613,10 @@ def main(user_input):
         
     z = np.array([False for i in range(user_input.npcs)])
     for j in range(len(zeros)):
-        z = np.logical_or(z, zeros[j])
+        z = np.logical_or(z[j], zeros[j])
         
     matrix_clean = matrix[~z]
+    matrix_clean['orig_sims'] = user_input.dataset
     matrix_clean.to_csv(user_input.output_fname, index=False)
     
     
@@ -523,6 +653,9 @@ if __name__ == '__main__':
     parser.add_argument('-f', '--min-flux-lim', dest='flux_lim',
                         required=False, type=float, default=0,
                        help='Minimum flux cut. Default is 0.')
+    parser.add_argument('-l', '--color', dest='colors',
+                       required=False, type=int, default=0,
+                       help='Add column with color.')
     
     from_user = parser.parse_args()
 
